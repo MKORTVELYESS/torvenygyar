@@ -5,7 +5,9 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -41,6 +43,10 @@ public class Main {
         Semaphore inFlight = new Semaphore(config.concurrency);
         AtomicInteger successCount = new AtomicInteger();
         AtomicInteger failureCount = new AtomicInteger();
+        AtomicInteger skipCount = new AtomicInteger();
+        Set<String> knownUrls = ConcurrentHashMap.newKeySet();
+        knownUrls.addAll(CsvWriter.loadExistingUrls(config.outputCsv));
+        IO.println("Loaded %d existing URL(s) from %s".formatted(knownUrls.size(), config.outputCsv));
 
         try (ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
              CsvWriter csvWriter = new CsvWriter(config.outputCsv)) {
@@ -55,11 +61,17 @@ public class Main {
 
                 List<CompletableFuture<Void>> downloads = new ArrayList<>(urls.size());
                 for (String url : urls) {
+                    if (!knownUrls.add(url)) {
+                        skipCount.incrementAndGet();
+                        IO.println("SKIP %s (already in output)".formatted(url));
+                        continue;
+                    }
                     inFlight.acquire();
                     CompletableFuture<Void> future = processor.processAsync(url, workers)
                             .handle((record, error) -> {
                                 inFlight.release();
                                 if (error != null) {
+                                    knownUrls.remove(url);
                                     failureCount.incrementAndGet();
                                     IO.println("FAIL %s: %s".formatted(url, rootMessage(error)));
                                     return null;
@@ -92,8 +104,8 @@ public class Main {
             CompletableFuture.allOf(pageFutures.toArray(CompletableFuture[]::new)).join();
         }
 
-        IO.println("Done. success=%d failure=%d -> %s"
-                .formatted(successCount.get(), failureCount.get(), config.outputCsv));
+        IO.println("Done. success=%d skipped=%d failure=%d -> %s"
+                .formatted(successCount.get(), skipCount.get(), failureCount.get(), config.outputCsv));
     }
 
     private static String rootMessage(Throwable error) {

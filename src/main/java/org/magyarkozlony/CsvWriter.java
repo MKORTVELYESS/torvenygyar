@@ -1,5 +1,6 @@
 package org.magyarkozlony;
 
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -9,6 +10,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -39,6 +42,50 @@ public final class CsvWriter implements AutoCloseable {
             throw new UncheckedIOException(writeFailure);
         }
         queue.add(record);
+    }
+
+    /**
+     * Reads URLs already present in the output CSV (first column), skipping the header.
+     */
+    public static Set<String> loadExistingUrls(Path csvPath) throws IOException {
+        Set<String> urls = new HashSet<>();
+        if (Files.notExists(csvPath) || Files.size(csvPath) == 0) {
+            return urls;
+        }
+        try (BufferedReader reader = Files.newBufferedReader(csvPath, StandardCharsets.UTF_8)) {
+            String line = reader.readLine(); // header
+            while ((line = reader.readLine()) != null) {
+                if (line.isBlank()) {
+                    continue;
+                }
+                String url = firstCsvField(line);
+                if (!url.isEmpty()) {
+                    urls.add(url);
+                }
+            }
+        }
+        return urls;
+    }
+
+    private static String firstCsvField(String line) {
+        if (line.startsWith("\"")) {
+            StringBuilder field = new StringBuilder();
+            for (int i = 1; i < line.length(); i++) {
+                char c = line.charAt(i);
+                if (c == '"') {
+                    if (i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                        field.append('"');
+                        i++;
+                        continue;
+                    }
+                    break;
+                }
+                field.append(c);
+            }
+            return field.toString();
+        }
+        int comma = line.indexOf(',');
+        return comma < 0 ? line.trim() : line.substring(0, comma).trim();
     }
 
     @Override
