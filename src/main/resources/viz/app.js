@@ -1,8 +1,10 @@
 import * as d3 from 'https://cdn.jsdelivr.net/npm/d3@7/+esm';
-import { GRANULARITIES, aggregate, parseRows, quantile } from './data.js';
+import { GRANULARITIES, aggregate, parseRows, quantile, stdDev } from './data.js';
 import { pickObject } from './objects.js';
-import { CLERK_ART, CLERK_ASPECT, NIGHT_TICKS, moodMeta } from './people.js';
-import { formatAxisTick, formatHeight, formatInt, formatRatio, formatTime } from './format.js';
+import { NIGHT_TICKS, moodMeta } from './people.js';
+import { renderDashboard } from './dashboard.js';
+import { applyStaticTranslations, getLang, initI18n, setLang, t } from './i18n.js';
+import { formatAxisTick, formatDuration, formatHeight, formatInt, formatRatio, formatTime } from './format.js';
 
 const SHEET_M = 0.0001; // one 80 g/m² A4 sheet ≈ 0.1 mm
 const DAY_MINUTES = 1440;
@@ -12,13 +14,15 @@ const NIGHT_AXIS_W = 126;
 const HEADROOM = 1.1;
 const WHEEL_STEP = 40;
 const WHEEL_COOLDOWN_MS = 380;
-const VIEW_GROUPS = [
-  { id: 'tower', label: 'Paper tower' },
-  { id: 'night', label: 'Night shift' },
-];
+const VIEW_GROUPS = ['tower', 'night'];
+const LANGS = ['en', 'hu'];
+// One release a day (and most weeks) has no spread, so a candle collapses to nothing.
+const COLUMN_GRANULARITIES = new Set(['daily', 'weekly']);
 
 const byId = id => document.getElementById(id);
 const els = {
+  heading: document.querySelector('h1'),
+  lede: document.querySelector('.lede'),
   groups: byId('view-groups'),
   granularity: byId('granularity'),
   stats: byId('stats'),
@@ -28,6 +32,12 @@ const els = {
   plot: byId('plot'),
   object: byId('object'),
   tooltip: byId('tooltip'),
+  candleHelpLink: byId('candle-help-link'),
+  candleModal: byId('candle-modal'),
+  candleModalClose: byId('candle-modal-close'),
+  cars: byId('cars'),
+  dashAverage: byId('dash-average'),
+  langToggle: byId('lang-toggle'),
 };
 
 const state = {
@@ -46,25 +56,54 @@ let overallMeanMinutes = null;
 init();
 
 async function init() {
+  await initI18n();
   try {
     const response = await fetch('results.csv', { cache: 'no-store' });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     rows = parseRows(await response.text());
   } catch (error) {
-    els.chart.innerHTML = `<div class="empty">Could not load results.csv (${error.message})</div>`;
+    els.chart.innerHTML = `<div class="empty">${t('error.loadFailed', { message: error.message })}</div>`;
     return;
   }
   if (rows.length === 0) {
-    els.chart.innerHTML = '<div class="empty">results.csv has no dated rows yet.</div>';
+    els.chart.innerHTML = `<div class="empty">${t('error.noData')}</div>`;
     return;
   }
   totals = { pages: d3.sum(rows, r => r.pages), issues: rows.length };
   overallMeanMinutes = d3.mean(rows, r => r.minutes);
   setupPlot();
+  applyStaticTranslations();
   renderViewGroups();
+  applyViewCopy(state.viewId);
   renderPills();
+  renderLangToggle();
   bindEvents();
   render();
+  renderDashboard(els.cars, els.dashAverage, rows);
+}
+
+/** Re-renders everything that carries translated text, after a language switch. */
+function applyLanguage() {
+  applyStaticTranslations();
+  renderViewGroups();
+  applyViewCopy(state.viewId);
+  renderPills();
+  updatePills();
+  renderLangToggle();
+  render();
+  renderDashboard(els.cars, els.dashAverage, rows);
+}
+
+function renderLangToggle() {
+  els.langToggle.innerHTML = LANGS
+    .map(id => `<button type="button" data-lang="${id}" class="${id === getLang() ? 'active' : ''}">${t(`lang.${id}`)}</button>`)
+    .join('');
+  [...els.langToggle.children].forEach(button =>
+    button.addEventListener('click', async () => {
+      if (button.dataset.lang === getLang()) return;
+      await setLang(button.dataset.lang);
+      applyLanguage();
+    }));
 }
 
 function bucketsFor(g) {
@@ -73,6 +112,52 @@ function bucketsFor(g) {
 }
 
 const barWidthFor = band => Math.max(1, band * (band > 40 ? 0.56 : band > 12 ? 0.7 : band > 5 ? 0.8 : 0.92));
+
+// Real pixel-width measurement for x-axis tick labels, so overlap is resolved
+// by thinning out ticks (never by shortening the label text further).
+const TICK_FONT_STACK = 'Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+const TICK_GAP = 12;
+const measureCtx = document.createElement('canvas').getContext('2d');
+function measureMaxLabelWidth(buckets, g, indices, level, short) {
+  let max = 0;
+  for (const i of indices) {
+    const key = buckets[i].key;
+    const bold = g.maxLevel > 0 && g.level(key) === g.maxLevel;
+    const label = g.tick(key, level, { short });
+    const lines = Array.isArray(label) ? label : [label];
+    lines.forEach((line, k) => {
+      measureCtx.font = `${k === 0 && bold ? 600 : 400} ${k === 0 ? 11 : 10.5}px ${TICK_FONT_STACK}`;
+      const w = measureCtx.measureText(String(line)).width;
+      if (w > max) max = w;
+    });
+  }
+  return max;
+}
+
+// On narrow (phone) viewports, bars/candles and their gaps shrink below the
+// desktop-tuned minimum band width so a whole series still fits without
+// losing the ability to compare buckets at a glance.
+const NARROW_CHART_W = 640;
+function minBandFor(minBand, chartW) {
+  if (chartW >= NARROW_CHART_W) return minBand;
+  const scale = Math.max(0.18, chartW / 900);
+  return Math.max(1, minBand * scale);
+}
+
+// Shrinks an SVG text element's font size (from its CSS-defined size) just
+// enough to fit within `maxWidth`, so long labels never get silently clipped
+// by the containing SVG's bounds on narrow screens.
+function fitTextToWidth(sel, maxWidth) {
+  const node = sel.node();
+  if (!node) return;
+  node.style.fontSize = '';
+  if (maxWidth <= 0) return;
+  const natural = node.getComputedTextLength();
+  if (natural > maxWidth) {
+    const current = parseFloat(getComputedStyle(node).fontSize);
+    node.style.fontSize = `${Math.max(current * (maxWidth / natural), current * 0.5).toFixed(1)}px`;
+  }
+}
 
 function setupPlot() {
   const svg = d3.select(els.plot);
@@ -101,6 +186,7 @@ function setupPlot() {
 
   svg.append('g').attr('class', 'grid');
   svg.append('rect').attr('class', 'hl').attr('fill', 'url(#hl)').attr('opacity', 0);
+  svg.append('rect').attr('class', 'hit').attr('fill', 'transparent').attr('pointer-events', 'all');
   svg.append('g').attr('class', 'towers');
   svg.append('g').attr('class', 'ref');
   svg.append('g').attr('class', 'annot');
@@ -109,16 +195,23 @@ function setupPlot() {
 
 function renderViewGroups() {
   els.groups.innerHTML = VIEW_GROUPS
-    .map(v => `<button type="button" data-view="${v.id}" class="${v.id === state.viewId ? 'active' : ''}">${v.label}</button>`)
+    .map(id => `<button type="button" data-view="${id}" class="${id === state.viewId ? 'active' : ''}">${t(`view.${id}.label`)}</button>`)
     .join('');
   [...els.groups.children].forEach(button =>
     button.addEventListener('click', () => setView(button.dataset.view)));
+}
+
+function applyViewCopy(id) {
+  els.heading.textContent = t(`view.${id}.title`);
+  els.lede.textContent = t(`view.${id}.lede`);
+  document.title = `Magyar Közlöny · ${t(`view.${id}.label`)}`;
 }
 
 function setView(id) {
   if (id === state.viewId) return;
   captureAnchor();
   state.viewId = id;
+  applyViewCopy(id);
   [...els.groups.children].forEach(button => button.classList.toggle('active', button.dataset.view === id));
   hideTooltip();
   render({ animate: true });
@@ -130,7 +223,7 @@ function renderPills() {
     const button = document.createElement('button');
     button.type = 'button';
     button.role = 'tab';
-    button.textContent = g.label;
+    button.textContent = t(`granularity.${g.id}`);
     button.addEventListener('click', () => setGranularity(i));
     els.granularity.append(button);
   });
@@ -162,6 +255,9 @@ function captureAnchor() {
 function render({ animate = false } = {}) {
   if (state.viewId === 'night') renderNightView(animate);
   else renderTowerView(animate);
+  const candles = state.viewId === 'night' && !COLUMN_GRANULARITIES.has(GRANULARITIES[state.gIndex].id);
+  els.candleHelpLink.hidden = !candles;
+  if (!candles) closeCandleModal();
   updatePills();
 }
 
@@ -180,14 +276,16 @@ function renderTowerView(animate) {
 
   const chartW = els.chart.clientWidth;
   const estimatedObjPx = (els.chart.clientHeight - MARGIN.top - MARGIN.bottom) * obj.height / top;
-  const objW = Math.round(Math.min(Math.max(estimatedObjPx * obj.aspect + 96, 200), chartW * 0.4));
+  const objFloor = chartW < NARROW_CHART_W ? 96 : 200;
+  const objW = Math.round(Math.min(Math.max(estimatedObjPx * obj.aspect + 96, objFloor), chartW * 0.4));
   const viewportW = chartW - Y_AXIS_W - objW;
-  const plotW = Math.max(viewportW, Math.ceil(n * g.minBand));
+  const plotW = Math.max(viewportW, Math.ceil(n * minBandFor(g.minBand, chartW)));
 
   els.scroll.style.width = `${viewportW}px`;
   els.plot.setAttribute('width', plotW);
   const height = els.scroll.clientHeight;
   els.plot.setAttribute('height', height);
+  d3.select(els.plot).select('rect.hit').attr('width', plotW).attr('height', height);
   els.yAxis.setAttribute('width', Y_AXIS_W);
   els.yAxis.setAttribute('height', height);
   els.object.setAttribute('width', objW);
@@ -227,11 +325,12 @@ function renderYAxis(y, top) {
     .attr('dy', '0.32em')
     .attr('text-anchor', 'end')
     .text(d => formatAxisTick(d, unit));
-  svg.append('text')
+  const title = svg.append('text')
     .attr('class', 'title')
-    .attr('x', 16)
+    .attr('x', 8)
     .attr('y', MARGIN.top - 36)
-    .text('HEIGHT');
+    .text(t('axis.height'));
+  fitTextToWidth(title, Y_AXIS_W - 12);
 }
 
 function renderGrid(y, plotW, tickValues) {
@@ -299,10 +398,11 @@ function renderObject(obj, y, objW, ground, animate) {
 
   const objPx = ground - y(obj.height);
   const w = objPx * obj.aspect;
-  const geometry = { x: Math.max(16, (objW - w) / 2 - 10), w, objPx, ground, topY: ground - objPx };
+  const geometry = { x: Math.max(16, (objW - w) / 2 - 10), w, objPx, ground, topY: ground - objPx, objW };
 
   let layer = svg.select('g.obj-layer.current');
   if (state.objectId === obj.id && !layer.empty()) {
+    layer.select('text.obj-name').text(t(`object.${obj.id}`).toUpperCase());
     applyObjectGeometry(layer, geometry, animate);
     return;
   }
@@ -325,7 +425,7 @@ function renderObject(obj, y, objW, ground, animate) {
   dim.append('line').attr('class', 'dim-v');
   dim.append('line').attr('class', 'cap-top');
   dim.append('line').attr('class', 'cap-bottom');
-  layer.append('text').attr('class', 'obj-name').text(obj.name.toUpperCase());
+  layer.append('text').attr('class', 'obj-name').text(t(`object.${obj.id}`).toUpperCase());
   layer.append('text').attr('class', 'obj-height').text(formatHeight(obj.height));
   applyObjectGeometry(layer, geometry, false);
 
@@ -337,7 +437,16 @@ function renderObject(obj, y, objW, ground, animate) {
   state.objectId = obj.id;
 }
 
-function applyObjectGeometry(layer, { x, w, objPx, ground, topY }, animate) {
+// The artwork may be wider than its pane on phones; its labels must still stay fully inside.
+function placeObjectLabel(sel, centerX, y, objW, tr) {
+  const margin = 6;
+  fitTextToWidth(sel, objW - margin * 2);
+  const half = (sel.node()?.getComputedTextLength() ?? 0) / 2;
+  const x = Math.max(margin + half, Math.min(centerX, objW - margin - half));
+  tr(sel).attr('x', x).attr('y', y);
+}
+
+function applyObjectGeometry(layer, { x, w, objPx, ground, topY, objW }, animate) {
   const tr = selection => (animate ? selection.transition().duration(650).ease(d3.easeCubicOut) : selection);
   const dimX = x + w + 16;
   const centerX = x + w / 2;
@@ -349,16 +458,20 @@ function applyObjectGeometry(layer, { x, w, objPx, ground, topY }, animate) {
   tr(layer.select('line.dim-v')).attr('x1', dimX).attr('x2', dimX).attr('y1', topY).attr('y2', ground);
   tr(layer.select('line.cap-top')).attr('x1', dimX - 5).attr('x2', dimX + 5).attr('y1', topY).attr('y2', topY);
   tr(layer.select('line.cap-bottom')).attr('x1', dimX - 5).attr('x2', dimX + 5).attr('y1', ground).attr('y2', ground);
-  tr(layer.select('text.obj-name')).attr('x', centerX).attr('y', topY - 34);
-  tr(layer.select('text.obj-height')).attr('x', centerX).attr('y', topY - 12);
+  placeObjectLabel(layer.select('text.obj-name'), centerX, topY - 34, objW, tr);
+  placeObjectLabel(layer.select('text.obj-height'), centerX, topY - 12, objW, tr);
 }
 
 function renderStats(g, maxBucket, maxH, obj) {
   const cards = [
-    { k: 'Pages published', v: formatInt(totals.pages), s: `${formatInt(totals.issues)} issues` },
-    { k: 'All-time stack', v: formatHeight(totals.pages * SHEET_M), s: 'A4 sheets at 0.1 mm each' },
-    { k: `Tallest ${g.unit}`, v: formatHeight(maxH), s: g.title(maxBucket.key) },
-    { k: 'Compared to', v: obj.name, s: `${formatHeight(obj.height)} · tallest tower is ${formatRatio(maxH, obj.height)} of it` },
+    { k: t('stats.pagesPublished'), v: formatInt(totals.pages), s: t('stats.issuesSuffix', { count: formatInt(totals.issues) }) },
+    { k: t('stats.allTimeStack'), v: formatHeight(totals.pages * SHEET_M), s: t('stats.sheetsNote') },
+    { k: t('stats.tallest', { unit: t(`unit.${g.unit}`) }), v: formatHeight(maxH), s: g.title(maxBucket.key) },
+    {
+      k: t('stats.comparedTo'),
+      v: t(`object.${obj.id}`),
+      s: t('stats.comparedToSub', { height: formatHeight(obj.height), ratio: formatRatio(maxH, obj.height) }),
+    },
   ];
   renderStatCards(cards);
 }
@@ -378,12 +491,13 @@ function renderNightView(animate) {
 
   const chartW = els.chart.clientWidth;
   const viewportW = chartW - NIGHT_AXIS_W;
-  const plotW = Math.max(viewportW, Math.ceil(n * g.minBand));
+  const plotW = Math.max(viewportW, Math.ceil(n * minBandFor(g.minBand, chartW)));
 
   els.scroll.style.width = `${viewportW}px`;
   els.plot.setAttribute('width', plotW);
   const height = els.scroll.clientHeight;
   els.plot.setAttribute('height', height);
+  d3.select(els.plot).select('rect.hit').attr('width', plotW).attr('height', height);
   els.yAxis.setAttribute('width', NIGHT_AXIS_W);
   els.yAxis.setAttribute('height', height);
   els.object.setAttribute('width', 0);
@@ -404,7 +518,8 @@ function renderNightView(animate) {
 
   renderNightYAxis(y);
   renderGrid(y, plotW, NIGHT_TICKS.map(t => t.minutes));
-  renderNightColumns(buckets, y, band, ground, animateColumns);
+  if (COLUMN_GRANULARITIES.has(g.id)) renderNightColumns(buckets, y, band, ground, animateColumns);
+  else renderNightCandles(buckets, y, band, ground, animateColumns);
   renderXAxis(buckets, g, band, ground);
   renderReference(y(overallMeanMinutes), plotW);
   const annot = d3.select(els.plot).select('g.annot');
@@ -423,24 +538,20 @@ function renderNightView(animate) {
 function renderNightYAxis(y) {
   const svg = d3.select(els.yAxis);
   svg.selectAll('*').remove();
-  const iconH = 34;
-  const iconW = iconH * CLERK_ASPECT;
 
   NIGHT_TICKS.forEach(tick => {
     const cy = y(tick.minutes);
-    svg.append('svg')
-      .attr('x', 14)
-      .attr('y', cy - iconH / 2)
-      .attr('width', iconW)
-      .attr('height', iconH)
-      .attr('viewBox', `0 0 ${(CLERK_ASPECT * 100).toFixed(1)} 100`)
-      .attr('overflow', 'visible')
-      .html(CLERK_ART[tick.mood]);
+    svg.append('text')
+      .attr('class', 'mood')
+      .attr('x', 10)
+      .attr('y', cy)
+      .attr('dominant-baseline', 'central')
+      .text(tick.emoji);
     svg.append('text')
       .attr('class', 'tick')
       .attr('x', NIGHT_AXIS_W - 12)
       .attr('y', cy)
-      .attr('dy', '0.32em')
+      .attr('dominant-baseline', 'central')
       .attr('text-anchor', 'end')
       .text(tick.label);
   });
@@ -449,9 +560,10 @@ function renderNightYAxis(y) {
     .attr('class', 'title')
     .attr('x', 10)
     .attr('y', MARGIN.top - 36)
-    .text('RELEASE TIME');
+    .text(t('axis.releaseTime'));
 }
 
+// Daily and weekly: one column per bucket, rising from midnight to the average release time.
 function renderNightColumns(buckets, y, band, ground, animate) {
   const container = d3.select(els.plot).select('g.towers');
   const old = container.selectAll('g.layer');
@@ -466,6 +578,21 @@ function renderNightColumns(buckets, y, band, ground, animate) {
     if (b.issues > 0) nonEmpty.push({ b, i, j: nonEmpty.length, h: ground - y(b.meanMinutes) });
   });
 
+  // Thousands of gradient-filled rects repaint slowly while fading out; merge them into single paths instead.
+  if (nonEmpty.length > 1500) {
+    const bodyPath = d3.path();
+    const capPath = d3.path();
+    for (const d of nonEmpty) {
+      const x = d.i * band + offset;
+      bodyPath.rect(x, ground - d.h, barW, d.h);
+      capPath.rect(x, ground - d.h, barW, 1.6);
+    }
+    layer.append('path').attr('class', 'body').attr('d', bodyPath).attr('fill', 'url(#sky)');
+    layer.append('path').attr('class', 'cap').attr('d', capPath).attr('fill', '#fff').attr('opacity', 0.85);
+    if (animate) layer.style('opacity', 0).transition().duration(260).style('opacity', 1);
+    return;
+  }
+
   const cols = layer.selectAll('g')
     .data(nonEmpty)
     .join('g')
@@ -478,7 +605,7 @@ function renderNightColumns(buckets, y, band, ground, animate) {
   const bodies = cols.selectAll('rect.body');
   const caps = cols.selectAll('rect.cap');
 
-  if (animate && nonEmpty.length <= 1500) {
+  if (animate) {
     const stagger = Math.min(14, 520 / Math.max(1, nonEmpty.length));
     bodies.attr('y', ground).attr('height', 0)
       .transition().delay(d => 120 + d.j * stagger).duration(700).ease(d3.easeCubicOut)
@@ -489,19 +616,94 @@ function renderNightColumns(buckets, y, band, ground, animate) {
   } else {
     bodies.attr('y', d => ground - d.h).attr('height', d => d.h);
     caps.attr('y', d => ground - d.h);
+  }
+}
+
+// A collapsed percentile range would be invisible, so keep at least a 1px mark.
+function visibleSpan(yTop, yBottom) {
+  const h = yBottom - yTop;
+  if (h >= 1) return { y: yTop, h };
+  return { y: yTop - (1 - h) / 2, h: 1 };
+}
+
+// Each column is a candlestick. The wide box is the 25th–75th percentile; the thin
+// wick is the 10th–90th, so releases outside that band stay off the chart as outliers.
+function renderNightCandles(buckets, y, band, ground, animate) {
+  const container = d3.select(els.plot).select('g.towers');
+  const old = container.selectAll('g.layer');
+  if (animate) old.interrupt().transition().duration(220).style('opacity', 0).remove();
+  else old.remove();
+
+  const layer = container.append('g').attr('class', 'layer');
+  const barW = barWidthFor(band);
+  const wickW = Math.max(1, Math.min(barW * 0.22, 3));
+  const offset = (band - barW) / 2;
+  const wickX = (barW - wickW) / 2;
+
+  const nonEmpty = [];
+  buckets.forEach((b, i) => {
+    if (b.issues === 0) return;
+    const sorted = b.minutes;
+    const wick = visibleSpan(y(quantile(sorted, 0.9)), y(quantile(sorted, 0.1)));
+    const box = visibleSpan(y(quantile(sorted, 0.75)), y(quantile(sorted, 0.25)));
+    nonEmpty.push({
+      b, i, j: nonEmpty.length,
+      yWick: wick.y, hWick: wick.h,
+      yBox: box.y, hBox: box.h,
+      yMed: y(quantile(sorted, 0.5)),
+    });
+  });
+
+  // Thousands of gradient-filled shapes repaint slowly while fading out; merge them into single paths instead.
+  if (nonEmpty.length > 1500) {
+    const wickPath = d3.path();
+    const boxPath = d3.path();
+    for (const d of nonEmpty) {
+      const x = d.i * band + offset;
+      wickPath.rect(x + wickX, d.yWick, wickW, d.hWick);
+      boxPath.rect(x, d.yBox, barW, d.hBox);
+    }
+    layer.append('path').attr('class', 'wick').attr('d', wickPath).attr('fill', '#9fb4d8');
+    layer.append('path').attr('class', 'box').attr('d', boxPath).attr('fill', 'url(#sky)');
     if (animate) layer.style('opacity', 0).transition().duration(260).style('opacity', 1);
+    return;
+  }
+
+  const cols = layer.selectAll('g')
+    .data(nonEmpty)
+    .join('g')
+    .attr('transform', d => `translate(${(d.i * band + offset).toFixed(2)},0)`);
+
+  cols.append('rect').attr('class', 'wick').attr('x', wickX).attr('width', wickW).attr('fill', '#9fb4d8');
+  cols.append('rect').attr('class', 'box').attr('x', 0).attr('width', barW).attr('fill', 'url(#sky)');
+
+  const wicks = cols.selectAll('rect.wick');
+  const boxes = cols.selectAll('rect.box');
+
+  if (animate) {
+    const stagger = Math.min(14, 520 / Math.max(1, nonEmpty.length));
+    wicks.attr('y', d => d.yMed).attr('height', 0)
+      .transition().delay(d => 120 + d.j * stagger).duration(700).ease(d3.easeCubicOut)
+      .attr('y', d => d.yWick).attr('height', d => d.hWick);
+    boxes.attr('y', d => d.yMed).attr('height', 0)
+      .transition().delay(d => 120 + d.j * stagger).duration(700).ease(d3.easeCubicOut)
+      .attr('y', d => d.yBox).attr('height', d => d.hBox);
+  } else {
+    wicks.attr('y', d => d.yWick).attr('height', d => d.hWick);
+    boxes.attr('y', d => d.yBox).attr('height', d => d.hBox);
   }
 }
 
 function renderNightStats(g, maxTimeBucket) {
   const mood = moodMeta(overallMeanMinutes);
+  const latestAvgLabel = t('stats.latestAvg', { unit: t(`unit.${g.unit}`) });
   const cards = [
-    { k: 'Releases analyzed', v: formatInt(totals.issues), s: `${formatInt(totals.pages)} pages total` },
-    { k: 'All-time average', v: formatTime(overallMeanMinutes), s: 'mean publication time' },
+    { k: t('stats.releasesAnalyzed'), v: formatInt(totals.issues), s: t('stats.pagesTotalSuffix', { count: formatInt(totals.pages) }) },
+    { k: t('stats.allTimeAverage'), v: formatTime(overallMeanMinutes), s: t('stats.meanPublicationTime') },
     maxTimeBucket
-      ? { k: `Latest avg ${g.unit}`, v: formatTime(maxTimeBucket.meanMinutes), s: g.title(maxTimeBucket.key) }
-      : { k: `Latest avg ${g.unit}`, v: '—', s: 'no data in range' },
-    { k: 'Typical mood', v: mood.label, s: `avg release at ${formatTime(overallMeanMinutes)}` },
+      ? { k: latestAvgLabel, v: formatTime(maxTimeBucket.meanMinutes), s: g.title(maxTimeBucket.key) }
+      : { k: latestAvgLabel, v: '—', s: t('stats.noDataInRange') },
+    { k: t('stats.typicalMood'), v: `${mood.emoji}  ${t(`mood.${mood.key}`)}`, s: t('stats.avgReleaseAt', { time: formatTime(overallMeanMinutes) }) },
   ];
   renderStatCards(cards);
 }
@@ -510,8 +712,8 @@ function renderNightStats(g, maxTimeBucket) {
 // Shared chart elements
 // ---------------------------------------------------------------------------
 
-function chooseTicks(buckets, g, band) {
-  const minPx = g.tickPx ?? 52;
+function chooseTicks(buckets, g, band, short) {
+  const minPx = short ? Math.max(28, (g.tickPx ?? 52) * 0.55) : (g.tickPx ?? 52);
   for (let level = 0; level <= g.maxLevel; level++) {
     const indices = [];
     buckets.forEach((b, i) => {
@@ -519,10 +721,14 @@ function chooseTicks(buckets, g, band) {
     });
     if (indices.length === 0) continue;
     const spacing = (buckets.length * band) / indices.length;
-    if (spacing >= minPx || level === g.maxLevel) {
-      const step = Math.max(1, Math.ceil(minPx / spacing));
-      return { level, indices: indices.filter((_, k) => k % step === 0) };
-    }
+    if (spacing < minPx && level !== g.maxLevel) continue;
+
+    const initialStep = Math.max(1, Math.ceil(minPx / spacing));
+    const candidates = indices.filter((_, k) => k % initialStep === 0);
+    // Thin out further if the real label widths would still overlap (never shorten the text).
+    const neededPx = measureMaxLabelWidth(buckets, g, candidates, level, short) + TICK_GAP;
+    const step = Math.max(initialStep, Math.ceil(neededPx / spacing));
+    return { level, indices: indices.filter((_, k) => k % step === 0) };
   }
   return { level: 0, indices: [] };
 }
@@ -530,11 +736,12 @@ function chooseTicks(buckets, g, band) {
 function renderXAxis(buckets, g, band, ground) {
   const axis = d3.select(els.plot).select('g.x-axis');
   axis.selectAll('*').remove();
-  const { level, indices } = chooseTicks(buckets, g, band);
+  const short = els.chart.clientWidth < NARROW_CHART_W;
+  const { level, indices } = chooseTicks(buckets, g, band, short);
   for (const i of indices) {
     const key = buckets[i].key;
     const x = i * band + band / 2;
-    const label = g.tick(key, level);
+    const label = g.tick(key, level, { short });
     const lines = Array.isArray(label) ? label : [label];
     axis.append('line').attr('x1', x).attr('x2', x).attr('y1', ground).attr('y2', ground + 5);
     const text = axis.append('text')
@@ -621,10 +828,10 @@ function showTowerTooltip(event, view, bucket) {
   els.tooltip.innerHTML = `
     <div class="tt-title">${view.g.title(bucket.key)}</div>
     ${sub ? `<div class="tt-sub">${sub}</div>` : '<div class="tt-sub"></div>'}
-    <div class="tt-row"><span>Pages</span><b>${formatInt(bucket.pages)}</b></div>
-    <div class="tt-row"><span>Issues</span><b>${formatInt(bucket.issues)}</b></div>
-    <div class="tt-row"><span>Stack height</span><b>${formatHeight(height)}</b></div>
-    <div class="tt-row"><span>vs. ${view.obj.name.toLowerCase()}</span><b>${formatRatio(height, view.obj.height)}</b></div>`;
+    <div class="tt-row"><span>${t('tooltip.pages')}</span><b>${formatInt(bucket.pages)}</b></div>
+    <div class="tt-row"><span>${t('tooltip.issues')}</span><b>${formatInt(bucket.issues)}</b></div>
+    <div class="tt-row"><span>${t('tooltip.stackHeight')}</span><b>${formatHeight(height)}</b></div>
+    <div class="tt-row"><span>${t('tooltip.vs', { name: t(`object.${view.obj.id}`).toLowerCase() })}</span><b>${formatRatio(height, view.obj.height)}</b></div>`;
   positionTooltip(event);
 }
 
@@ -632,14 +839,15 @@ function showNightTooltip(event, view, bucket) {
   const sub = view.g.sub?.(bucket.key);
   const body = bucket.issues > 0
     ? `
-      <div class="tt-row"><span>Issues</span><b>${formatInt(bucket.issues)}</b></div>
-      <div class="tt-row"><span>Average time</span><b>${formatTime(bucket.meanMinutes)}</b></div>
-      <div class="tt-row"><span>10th percentile</span><b>${formatTime(quantile(bucket.minutes, 0.1))}</b></div>
-      <div class="tt-row"><span>20th percentile</span><b>${formatTime(quantile(bucket.minutes, 0.2))}</b></div>
-      <div class="tt-row"><span>50th percentile</span><b>${formatTime(quantile(bucket.minutes, 0.5))}</b></div>
-      <div class="tt-row"><span>75th percentile</span><b>${formatTime(quantile(bucket.minutes, 0.75))}</b></div>
-      <div class="tt-row"><span>90th percentile</span><b>${formatTime(quantile(bucket.minutes, 0.9))}</b></div>`
-    : '<div class="tt-row"><span>No issues</span><b>—</b></div>';
+      <div class="tt-row"><span>${t('tooltip.issues')}</span><b>${formatInt(bucket.issues)}</b></div>
+      <div class="tt-row"><span>${t('tooltip.avg')}</span><b>${formatTime(bucket.meanMinutes)}</b></div>
+      <div class="tt-row"><span>${t('tooltip.median')}</span><b>${formatTime(quantile(bucket.minutes, 0.5))}</b></div>
+      <div class="tt-row"><span>${t('tooltip.stdDeviation')}</span><b>${formatDuration(stdDev(bucket.minutes, bucket.meanMinutes))}</b></div>
+      <div class="tt-row"><span>${t('tooltip.p10')}</span><b>${formatTime(quantile(bucket.minutes, 0.1))}</b></div>
+      <div class="tt-row"><span>${t('tooltip.p25')}</span><b>${formatTime(quantile(bucket.minutes, 0.25))}</b></div>
+      <div class="tt-row"><span>${t('tooltip.p75')}</span><b>${formatTime(quantile(bucket.minutes, 0.75))}</b></div>
+      <div class="tt-row"><span>${t('tooltip.p90')}</span><b>${formatTime(quantile(bucket.minutes, 0.9))}</b></div>`
+    : `<div class="tt-row"><span>${t('tooltip.noIssues')}</span><b>—</b></div>`;
   els.tooltip.innerHTML = `
     <div class="tt-title">${view.g.title(bucket.key)}</div>
     ${sub ? `<div class="tt-sub">${sub}</div>` : '<div class="tt-sub"></div>'}
@@ -650,6 +858,18 @@ function showNightTooltip(event, view, bucket) {
 function hideTooltip() {
   els.tooltip.classList.remove('show');
   d3.select(els.plot).select('rect.hl').attr('opacity', 0);
+}
+
+// ---------------------------------------------------------------------------
+// Candle interpretation modal
+// ---------------------------------------------------------------------------
+
+function openCandleModal() {
+  els.candleModal.hidden = false;
+}
+
+function closeCandleModal() {
+  els.candleModal.hidden = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -687,7 +907,11 @@ function bindEvents() {
     event.preventDefault();
   });
 
+  // Phones have no hover, so a tap has to open the tooltip and leave it open.
+  const noHover = () => window.matchMedia('(hover: none), (pointer: coarse)').matches;
+  const isTouch = event => event.pointerType === 'touch' || event.pointerType === 'pen';
   let drag = null;
+  let touchTooltip = false;
   els.scroll.addEventListener('pointerdown', event => {
     if (event.button !== 0) return;
     drag = { x: event.clientX, left: els.scroll.scrollLeft, moved: false };
@@ -708,9 +932,34 @@ function bindEvents() {
   });
 
   els.plot.addEventListener('pointermove', event => {
-    if (!drag?.moved) showTooltip(event);
+    if (noHover() || isTouch(event) || drag?.moved) return;
+    showTooltip(event);
   });
-  els.plot.addEventListener('pointerleave', hideTooltip);
+  // pointerup reaches the plot before the window handler clears the drag.
+  els.plot.addEventListener('pointerup', event => {
+    if ((!isTouch(event) && !noHover()) || drag?.moved) return;
+    touchTooltip = true;
+    showTooltip(event);
+  });
+  els.plot.addEventListener('pointerleave', () => {
+    if (touchTooltip || noHover()) return;
+    hideTooltip();
+  });
+  document.addEventListener('pointerdown', event => {
+    if ((touchTooltip || noHover()) && !els.plot.contains(event.target)) {
+      touchTooltip = false;
+      hideTooltip();
+    }
+  });
+
+  els.candleHelpLink.addEventListener('click', openCandleModal);
+  els.candleModalClose.addEventListener('click', closeCandleModal);
+  els.candleModal.addEventListener('click', event => {
+    if (event.target === els.candleModal) closeCandleModal();
+  });
+  window.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !els.candleModal.hidden) closeCandleModal();
+  });
 
   let resizeTimer;
   window.addEventListener('resize', () => {

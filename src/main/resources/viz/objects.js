@@ -143,6 +143,27 @@ const tree = () => `
   <circle cx="47" cy="55" r="12" fill="#5aa874"/>
   <circle cx="28" cy="16" r="7" fill="#7cc191" opacity=".6"/>`;
 
+const basilica = () => `
+  <rect x="2" y="88" width="56" height="12" fill="#cfc6ac"/>
+  <rect x="8" y="50" width="44" height="40" fill="#efe6cf"/>
+  <path d="M8 50 L30 32 L52 50 Z" fill="#e3d6b0"/>
+  <rect x="14" y="58" width="4" height="32" fill="#cbbd96"/>
+  <rect x="22" y="58" width="4" height="32" fill="#cbbd96"/>
+  <rect x="34" y="58" width="4" height="32" fill="#cbbd96"/>
+  <rect x="42" y="58" width="4" height="32" fill="#cbbd96"/>
+  <rect x="0" y="22" width="12" height="52" fill="#e3d6b0"/>
+  <rect x="1" y="14" width="10" height="9" fill="#cbbd96"/>
+  <path d="M1 14 Q6 4 11 14 Z" fill="#b9ab82"/>
+  <rect x="5" y="0" width="2" height="6" fill="#8d8265"/>
+  <rect x="48" y="22" width="12" height="52" fill="#e3d6b0"/>
+  <rect x="49" y="14" width="10" height="9" fill="#cbbd96"/>
+  <path d="M49 14 Q54 4 59 14 Z" fill="#b9ab82"/>
+  <rect x="53" y="0" width="2" height="6" fill="#8d8265"/>
+  <rect x="20" y="16" width="20" height="18" fill="#e3d6b0"/>
+  <path d="M18 16 A12 14 0 0 1 42 16 Z" fill="#b9ab82"/>
+  <rect x="29" y="0" width="2" height="8" fill="#8d8265"/>
+  <rect x="26" y="2" width="8" height="2" fill="#8d8265"/>`;
+
 function panelBlock() {
   const W = 56, floors = 10, roof = 3.2, fh = (100 - roof) / floors;
   const balcony = ['#d9734e', '#e2a54a', '#4f9c94'];
@@ -183,6 +204,7 @@ export const OBJECTS = [
   { id: 'house', name: 'Family house', height: 9, aspect: 0.8, art: house() },
   { id: 'tree', name: 'Oak tree', height: 20, aspect: 0.7, art: tree() },
   { id: 'panel', name: 'Ten-storey panel block', height: 30, aspect: 0.56, art: panelBlock() },
+  { id: 'basilica', name: "St. Stephen's Basilica", height: 96, aspect: 0.6, art: basilica() },
 ];
 
 /** Smallest object at least as tall as the tallest tower. */

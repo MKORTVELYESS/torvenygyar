@@ -12,20 +12,25 @@
 <body>
 <header class="top">
   <div class="brand">
-    <div class="eyebrow">Magyar Közlöny · Official Gazette of Hungary</div>
+    <div class="eyebrow" data-i18n="eyebrow">Magyar Közlöny · Official Gazette of Hungary</div>
     <h1>How tall is the law?</h1>
     <p class="lede">Every published page stacked as a sheet of A4 paper, compared with things you know.</p>
   </div>
-  <nav class="view-groups" id="view-groups" aria-label="Views"></nav>
+  <div class="top-actions">
+    <nav class="view-groups" id="view-groups" aria-label="Views"></nav>
+    <div class="lang-toggle" id="lang-toggle" role="group" aria-label="Language"></div>
+  </div>
 </header>
 
 <main>
   <section class="toolbar">
     <div class="granularity" id="granularity" role="tablist" aria-label="Granularity"></div>
     <div class="hint">
-      <span class="kbd">Scroll</span> ↓ coarser · ↑ finer
+      <span class="kbd" data-i18n="toolbar.scroll">Scroll</span>
+      <span data-i18n="toolbar.scrollHint">↓ coarser · ↑ finer</span>
       <span class="sep"></span>
-      <span class="kbd">Shift</span> + scroll or drag to pan
+      <span class="kbd" data-i18n="toolbar.shift">Shift</span>
+      <span data-i18n="toolbar.shiftHint">+ scroll or drag to pan</span>
     </div>
   </section>
 
@@ -37,13 +42,67 @@
     <svg class="object" id="object"></svg>
   </section>
 
-  <footer class="foot" id="foot">
+  <button type="button" class="candle-help-link" id="candle-help-link" hidden>
+    <svg class="candle-help-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" fill-rule="evenodd" d="M12 2.25a9.75 9.75 0 1 0 0 19.5 9.75 9.75 0 0 0 0-19.5zM12 7.15a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4zM10.85 11.15h2.3v5.85h-2.3z"/>
+    </svg>
+    <span data-i18n="candle.link">Interpreting the candle chart</span>
+  </button>
+
+  <footer class="foot" id="foot" data-i18n="footer.source">
     Source: PDF metadata of magyarkozlony.hu issues (creation date, page count).
     One page = one 80 g/m² A4 sheet ≈ 0.1 mm. Early issues were digitized in batches, so their dates cluster.
   </footer>
+
+  <section class="dashboard">
+    <div class="dash-head">
+      <div class="eyebrow" data-i18n="dash.eyebrow">Government comparison</div>
+      <h2 data-i18n="dash.title">Full throttle</h2>
+      <p class="lede" data-i18n="dash.lede">
+        Speed is pages per day; RPM is issues per day. The premiership closest to the all-time average
+        pace is pinned at a steady 130 km/h, and everyone else is scaled against it.
+      </p>
+    </div>
+    <div class="dash-average" id="dash-average"></div>
+    <div class="cars" id="cars"></div>
+  </section>
+
+  <p class="disclaimer" data-i18n="disclaimer">
+    “All-time” throughout this page means since digital record-keeping began, in 1998 — not the Gazette’s
+    full history back to 1867.
+  </p>
 </main>
 
 <div class="tooltip" id="tooltip" role="tooltip"></div>
+
+<div class="modal-overlay" id="candle-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="candle-modal-title">
+    <button type="button" class="modal-close" id="candle-modal-close" aria-label="Close">&times;</button>
+    <h3 id="candle-modal-title" data-i18n="candle.modalTitle">Interpreting the candle chart</h3>
+    <p class="modal-intro" data-i18n="candle.modalIntro">
+      Each candle summarizes release times using four percentiles.
+    </p>
+    <svg class="candle-diagram" viewBox="0 0 260 190" aria-hidden="true">
+      <line x1="0" y1="14" x2="260" y2="14" class="guide"/>
+      <text x="250" y="10" data-i18n="tooltip.p90">90th percentile</text>
+      <line x1="0" y1="52" x2="260" y2="52" class="guide"/>
+      <text x="250" y="48" data-i18n="tooltip.p75">75th percentile</text>
+      <line x1="0" y1="128" x2="260" y2="128" class="guide"/>
+      <text x="250" y="124" data-i18n="tooltip.p25">25th percentile</text>
+      <line x1="0" y1="166" x2="260" y2="166" class="guide"/>
+      <text x="250" y="162" data-i18n="tooltip.p10">10th percentile</text>
+      <rect x="44" y="14" width="10" height="152" rx="4" class="wick"/>
+      <rect x="26" y="52" width="46" height="76" rx="3" class="box"/>
+    </svg>
+    <dl class="candle-legend">
+      <div><dt data-i18n="tooltip.p90">90th percentile</dt><dd data-i18n="candle.p90"></dd></div>
+      <div><dt data-i18n="tooltip.p75">75th percentile</dt><dd data-i18n="candle.p75"></dd></div>
+      <div><dt data-i18n="tooltip.p25">25th percentile</dt><dd data-i18n="candle.p25"></dd></div>
+      <div><dt data-i18n="tooltip.p10">10th percentile</dt><dd data-i18n="candle.p10"></dd></div>
+    </dl>
+  </div>
+</div>
+
 <script type="module" src="app.js"></script>
 </body>
 </html>

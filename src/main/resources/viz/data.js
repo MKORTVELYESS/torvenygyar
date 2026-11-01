@@ -1,3 +1,5 @@
+import { t } from './i18n.js';
+
 const DAY_MS = 86_400_000;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
@@ -48,7 +50,7 @@ function ymdOf(day) {
   return { y: date.getUTCFullYear(), m: date.getUTCMonth() + 1, d: date.getUTCDate(), dow: date.getUTCDay() };
 }
 
-const fmtDay = day => {
+export const fmtDay = day => {
   const { y, m, d } = ymdOf(day);
   return `${d} ${MONTHS[m - 1]} ${y}`;
 };
@@ -119,6 +121,14 @@ export function quantile(sorted, q) {
     : sorted[base];
 }
 
+/** Population standard deviation of `values` around `mean` (or computed from them if omitted). */
+export function stdDev(values, mean) {
+  if (!values || values.length === 0) return null;
+  const m = mean ?? values.reduce((sum, v) => sum + v, 0) / values.length;
+  const variance = values.reduce((sum, v) => sum + (v - m) ** 2, 0) / values.length;
+  return Math.sqrt(variance);
+}
+
 const weekMonday = k => k * 7 + 4; // day 4 since epoch is Monday 1970-01-05
 
 function isoWeek(monday) {
@@ -158,7 +168,7 @@ export const GRANULARITIES = [
     },
     tick: (k, level) => {
       const { y, m, d } = ymdOf(k);
-      if (level >= 2) return m === 1 && d === 1 ? `${y}` : MONTHS[m - 1];
+      if (level >= 2) return m === 1 && d === 1 ? `${y}` : `${MONTHS[m - 1]} ’${String(y).slice(-2)}`;
       return `${d} ${MONTHS[m - 1]}`;
     },
   },
@@ -223,11 +233,27 @@ export const GRANULARITIES = [
       return `${fmtDay(g.startDay)} – ${g.end ? fmtDay(g.endDay - 1) : 'present'}`;
     },
     level: () => 0,
-    tick: k => {
+    tick: (k, _level, opts) => {
       const g = GOVERNMENTS[k];
       const lastYear = g.end ? ymdOf(g.endDay - 1).y : '';
+      if (opts?.short) {
+        const surname = g.pm.split(' ')[0];
+        const name = g.cabinet ? `${surname} ${g.cabinet}` : surname;
+        const shortYears = `’${g.start.slice(2, 4)}–${lastYear ? `’${String(lastYear).slice(-2)}` : ''}`;
+        return [name, shortYears];
+      }
       const years = `${g.start.slice(0, 4)}–${lastYear}`;
       return [g.pm, g.cabinet ? `${g.cabinet} · ${years}` : years];
     },
+  },
+  {
+    // The entire archive collapsed into a single bucket — every page and every
+    // release time ever recorded, side by side as one column.
+    id: 'alltime', label: 'All time', unit: 'all-time', minBand: 240, maxLevel: 0, tickPx: 0,
+    key: () => 0,
+    title: () => t('granularity.alltime'),
+    sub: () => t('allTimeArchive'),
+    level: () => 0,
+    tick: () => t('granularity.alltime'),
   },
 ];

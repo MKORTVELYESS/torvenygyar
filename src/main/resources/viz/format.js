@@ -1,3 +1,5 @@
+import { getLang } from './i18n.js';
+
 const trim = s => (s.includes('.') ? s.replace(/\.?0+$/, '') : s);
 
 /** Picks mm, cm or m depending on magnitude. */
@@ -12,7 +14,7 @@ export function formatAxisTick(meters, unit) {
   return unit === 'cm' ? `${trim((meters * 100).toFixed(1))} cm` : `${trim(meters.toFixed(2))} m`;
 }
 
-export const formatInt = v => v.toLocaleString('en-US');
+export const formatInt = v => v.toLocaleString(getLang() === 'hu' ? 'hu-HU' : 'en-US');
 
 /** Minutes since midnight (0–1440, Budapest time) as HH:MM. */
 export function formatTime(minutes) {
@@ -21,6 +23,15 @@ export function formatTime(minutes) {
   const hh = Math.floor(total / 60).toString().padStart(2, '0');
   const mm = (total % 60).toString().padStart(2, '0');
   return `${hh}:${mm}`;
+}
+
+/** A span of minutes (e.g. a standard deviation) as "Xh Ym" / "Ym". */
+export function formatDuration(minutes) {
+  if (minutes == null || Number.isNaN(minutes)) return '—';
+  const total = Math.round(minutes);
+  const hh = Math.floor(total / 60);
+  const mm = total % 60;
+  return hh > 0 ? `${hh}h ${mm}m` : `${mm}m`;
 }
 
 export function formatRatio(value, reference) {
