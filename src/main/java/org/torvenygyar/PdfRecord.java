@@ -1,4 +1,4 @@
-package org.magyarkozlony;
+package org.torvenygyar;
 
 import java.time.OffsetDateTime;
 

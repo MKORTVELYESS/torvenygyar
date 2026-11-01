@@ -1,4 +1,4 @@
-package org.magyarkozlony;
+package org.torvenygyar;
 
 import org.jsoup.HttpStatusException;
 import org.jsoup.Jsoup;
@@ -18,7 +18,7 @@ public final class PageScanner {
 
     private static final String LISTING_URL = "https://magyarkozlony.hu/?page=%d";
     private static final String USER_AGENT =
-            "terjedelem/1.0 (+https://github.com/local; research aggregation)";
+            "torvenygyar/1.0 (+https://github.com/local; research aggregation)";
     private static final long RETRY_DELAY_MS = 3_000L;
 
     private static final SSLSocketFactory SSL_SOCKET_FACTORY =

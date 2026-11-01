@@ -1,4 +1,4 @@
-package org.magyarkozlony;
+package org.torvenygyar;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -25,7 +25,7 @@ import java.util.concurrent.Executor;
 public final class PdfProcessor {
 
     private static final String USER_AGENT =
-            "terjedelem/1.0 (+https://github.com/local; research aggregation)";
+            "torvenygyar/1.0 (+https://github.com/local; research aggregation)";
 
     private final HttpClient httpClient;
     private final Path downloadDir;

@@ -1,4 +1,4 @@
-package org.magyarkozlony;
+package org.torvenygyar;
 
 import java.net.http.HttpClient;
 import java.nio.file.Path;

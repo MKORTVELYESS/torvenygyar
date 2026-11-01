@@ -1,4 +1,4 @@
-package org.magyarkozlony;
+package org.torvenygyar;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;

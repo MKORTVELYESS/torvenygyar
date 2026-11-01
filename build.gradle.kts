@@ -3,7 +3,7 @@ plugins {
     id("application")
 }
 
-group = "org.magyarkozlony"
+group = "org.torvenygyar"
 version = "1.0-SNAPSHOT"
 
 java {
@@ -13,7 +13,7 @@ java {
 }
 
 application {
-    mainClass = "org.magyarkozlony.Main"
+    mainClass = "org.torvenygyar.Main"
 }
 
 repositories {
@@ -42,5 +42,5 @@ tasks.register<JavaExec>("viz") {
     group = "application"
     description = "Serves the results.csv visualization on http://localhost:8080"
     classpath = sourceSets.main.get().runtimeClasspath
-    mainClass = "org.magyarkozlony.VizServer"
+    mainClass = "org.torvenygyar.VizServer"
 }

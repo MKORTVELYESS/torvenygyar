@@ -1,4 +1,4 @@
-package org.magyarkozlony;
+package org.torvenygyar;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
