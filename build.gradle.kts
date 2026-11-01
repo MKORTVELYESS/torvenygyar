@@ -37,3 +37,10 @@ tasks.named<JavaExec>("run") {
     // Allow passing e.g. --args="--from=1 --to=1"
     standardInput = System.`in`
 }
+
+tasks.register<JavaExec>("viz") {
+    group = "application"
+    description = "Serves the results.csv visualization on http://localhost:8080"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass = "org.magyarkozlony.VizServer"
+}

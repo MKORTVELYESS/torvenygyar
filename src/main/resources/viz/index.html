@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Magyar Közlöny · Paper tower</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <div class="eyebrow">Magyar Közlöny · Official Gazette of Hungary</div>
+    <h1>How tall is the law?</h1>
+    <p class="lede">Every published page stacked as a sheet of A4 paper, compared with things you know.</p>
+  </div>
+  <nav class="view-groups" id="view-groups" aria-label="Views"></nav>
+</header>
+
+<main>
+  <section class="toolbar">
+    <div class="granularity" id="granularity" role="tablist" aria-label="Granularity"></div>
+    <div class="hint">
+      <span class="kbd">Scroll</span> ↓ coarser · ↑ finer
+      <span class="sep"></span>
+      <span class="kbd">Shift</span> + scroll or drag to pan
+    </div>
+  </section>
+
+  <section class="stats" id="stats"></section>
+
+  <section class="chart" id="chart">
+    <svg class="y-axis" id="y-axis"></svg>
+    <div class="plot-scroll" id="plot-scroll"><svg id="plot"></svg></div>
+    <svg class="object" id="object"></svg>
+  </section>
+
+  <footer class="foot" id="foot">
+    Source: PDF metadata of magyarkozlony.hu issues (creation date, page count).
+    One page = one 80 g/m² A4 sheet ≈ 0.1 mm. Early issues were digitized in batches, so their dates cluster.
+  </footer>
+</main>
+
+<div class="tooltip" id="tooltip" role="tooltip"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
