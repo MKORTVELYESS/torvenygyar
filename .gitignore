@@ -41,3 +41,9 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+
+### App runtime ###
+tmp-pdfs/
+results*.csv
+*.pdf
+page*.html
