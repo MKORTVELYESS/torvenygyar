@@ -1,5 +1,6 @@
 package org.magyarkozlony;
 
+import org.jsoup.HttpStatusException;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -18,6 +19,7 @@ public final class PageScanner {
     private static final String LISTING_URL = "https://magyarkozlony.hu/?page=%d";
     private static final String USER_AGENT =
             "terjedelem/1.0 (+https://github.com/local; research aggregation)";
+    private static final long RETRY_DELAY_MS = 3_000L;
 
     private static final SSLSocketFactory SSL_SOCKET_FACTORY =
             SslSupport.createSslContext().getSocketFactory();
@@ -27,15 +29,10 @@ public final class PageScanner {
 
     /**
      * Returns download URLs ({@code .../letoltes}) for every PDF journal row on the page.
+     * On HTTP 500, waits 3 seconds and retries once.
      */
     public static List<String> findPdfDownloadUrls(int pageNumber) throws IOException {
-        String url = LISTING_URL.formatted(pageNumber);
-        Document document = Jsoup.connect(url)
-                .userAgent(USER_AGENT)
-                .sslSocketFactory(SSL_SOCKET_FACTORY)
-                .timeout(60_000)
-                .get();
-
+        Document document = fetchListingPage(pageNumber);
         List<String> downloadUrls = new ArrayList<>();
         Elements rows = document.select("div.journal-row");
         for (Element row : rows) {
@@ -54,6 +51,33 @@ public final class PageScanner {
             downloadUrls.add(toDownloadUrl(content));
         }
         return downloadUrls;
+    }
+
+    private static Document fetchListingPage(int pageNumber) throws IOException {
+        String url = LISTING_URL.formatted(pageNumber);
+        try {
+            return getDocument(url);
+        } catch (HttpStatusException e) {
+            if (e.getStatusCode() != 500) {
+                throw e;
+            }
+            IO.println("HTTP 500 for page %d, waiting 3s then retrying".formatted(pageNumber));
+            try {
+                Thread.sleep(RETRY_DELAY_MS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Interrupted while waiting to retry page " + pageNumber, ie);
+            }
+            return getDocument(url);
+        }
+    }
+
+    private static Document getDocument(String url) throws IOException {
+        return Jsoup.connect(url)
+                .userAgent(USER_AGENT)
+                .sslSocketFactory(SSL_SOCKET_FACTORY)
+                .timeout(60_000)
+                .get();
     }
 
     static String toDownloadUrl(String metaUrl) {
