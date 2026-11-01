@@ -14,6 +14,15 @@ export function formatAxisTick(meters, unit) {
 
 export const formatInt = v => v.toLocaleString('en-US');
 
+/** Minutes since midnight (0–1440, Budapest time) as HH:MM. */
+export function formatTime(minutes) {
+  if (minutes == null || Number.isNaN(minutes)) return '—';
+  const total = Math.round(minutes) % 1440;
+  const hh = Math.floor(total / 60).toString().padStart(2, '0');
+  const mm = (total % 60).toString().padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
 export function formatRatio(value, reference) {
   const r = value / reference;
   return r >= 1 ? `${trim(r.toFixed(r >= 10 ? 0 : 1))}×` : `${Math.round(r * 100)}%`;

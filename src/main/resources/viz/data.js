@@ -23,6 +23,17 @@ const budapestDate = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Europe/Budapest', year: 'numeric', month: '2-digit', day: '2-digit',
 });
 
+const budapestTime = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Europe/Budapest', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+
+function minutesOfDay(date) {
+  const parts = budapestTime.formatToParts(date);
+  const hh = Number(parts.find(p => p.type === 'hour').value);
+  const mm = Number(parts.find(p => p.type === 'minute').value);
+  return hh * 60 + mm;
+}
+
 function isoDay(iso) {
   const [y, m, d] = iso.split('-').map(Number);
   return dayOf(y, m, d);
@@ -49,21 +60,26 @@ export function parseRows(text) {
     const [url, dateTime, pageCount] = lines[i].split(',');
     const pages = Number(pageCount);
     if (!dateTime || !Number.isFinite(pages) || pages <= 0) continue;
-    const [y, m, d] = budapestDate.format(new Date(dateTime)).split('-').map(Number);
-    rows.push({ url, pages, y, m, d, day: dayOf(y, m, d) });
+    const date = new Date(dateTime);
+    const [y, m, d] = budapestDate.format(date).split('-').map(Number);
+    rows.push({ url, pages, y, m, d, day: dayOf(y, m, d), minutes: minutesOfDay(date) });
   }
   return rows;
 }
 
-/** Sums pages per bucket and fills gaps so the timeline is continuous. */
+/**
+ * Sums pages per bucket, fills gaps so the timeline is continuous, and tracks
+ * each bucket's sorted release times (minutes since midnight) for the Night shift view.
+ */
 export function aggregate(rows, granularity) {
   const sums = new Map();
   for (const row of rows) {
     const key = granularity.key(row);
     if (key == null) continue;
-    const bucket = sums.get(key) ?? { pages: 0, issues: 0 };
+    const bucket = sums.get(key) ?? { pages: 0, issues: 0, minutes: [] };
     bucket.pages += row.pages;
     bucket.issues += 1;
+    bucket.minutes.push(row.minutes);
     sums.set(key, bucket);
   }
   if (sums.size === 0) return [];
@@ -76,9 +92,31 @@ export function aggregate(rows, granularity) {
   const buckets = [];
   for (let key = min; key <= max; key++) {
     const bucket = sums.get(key);
-    buckets.push({ key, pages: bucket?.pages ?? 0, issues: bucket?.issues ?? 0 });
+    const minutes = bucket?.minutes ?? [];
+    minutes.sort((a, b) => a - b);
+    const meanMinutes = minutes.length
+      ? minutes.reduce((sum, v) => sum + v, 0) / minutes.length
+      : null;
+    buckets.push({
+      key,
+      pages: bucket?.pages ?? 0,
+      issues: bucket?.issues ?? 0,
+      minutes,
+      meanMinutes,
+    });
   }
   return buckets;
+}
+
+/** Linear-interpolated percentile (q in [0,1]) over an already-sorted array. */
+export function quantile(sorted, q) {
+  if (!sorted || sorted.length === 0) return null;
+  const pos = (sorted.length - 1) * q;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  return sorted[base + 1] !== undefined
+    ? sorted[base] + rest * (sorted[base + 1] - sorted[base])
+    : sorted[base];
 }
 
 const weekMonday = k => k * 7 + 4; // day 4 since epoch is Monday 1970-01-05
