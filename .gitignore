@@ -45,5 +45,6 @@ bin/
 ### App runtime ###
 tmp-pdfs/
 results*.csv
+!results.csv
 *.pdf
 page*.html
