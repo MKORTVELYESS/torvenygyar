@@ -134,7 +134,7 @@ const hu = {
     pagesTotalSuffix: '{{count}} oldal összesen',
     allTimeAverage: 'Mindenkori átlag',
     meanPublicationTime: 'átlagos megjelenési időpont',
-    latestAvg: 'Legutóbbi átlag ({{unit}})',
+    latestAvg: 'Legkésőbbi átlag ({{unit}})',
     noDataInRange: 'nincs adat',
     typicalMood: 'Jellemző hangulat',
     avgReleaseAt: 'átlagosan {{time}}-kor',

@@ -34,7 +34,7 @@ public final class PageScanner {
     public static List<String> findPdfDownloadUrls(int pageNumber) throws IOException {
         Document document = fetchListingPage(pageNumber);
         List<String> downloadUrls = new ArrayList<>();
-        Elements rows = document.select("div.journal-row");
+        Elements rows = document.select("div.journal-row, div.fresh-row");
         for (Element row : rows) {
             Element fileFormat = row.selectFirst("meta[itemprop=fileFormat][content=application/pdf]");
             if (fileFormat == null) {
