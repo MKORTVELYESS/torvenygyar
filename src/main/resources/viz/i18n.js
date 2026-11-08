@@ -149,7 +149,7 @@ const hu = {
     link: 'Hogyan olvassuk a gyertyadiagramot',
     modalTitle: 'Hogyan olvassuk a gyertyadiagramot',
     modalIntro: 'Minden gyertya négy percentilissel foglalja össze az adott időszak megjelenési időpontjait:',
-    p10: 'A számok 10%-a ez előtt az időpont előtt jelent meg',
+    p10: 'A számok tizede ez előtt az időpont előtt jelent meg',
     p25: 'A számok háromnegyede ez után az időpont után jelent meg',
     p75: 'A számok negyede ez után az időpont után jelent meg',
     p90: 'A számok tizede ez után az időpont után jelent meg',

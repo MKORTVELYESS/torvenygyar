@@ -113,6 +113,19 @@ function bucketsFor(g) {
 
 const barWidthFor = band => Math.max(1, band * (band > 40 ? 0.56 : band > 12 ? 0.7 : band > 5 ? 0.8 : 0.92));
 
+// Above this count, layers use merged paths / solid fills and must not opacity-fade.
+// Fading a ~5k-subpath gradient layer (daily night) freezes Safari on phone and desktop.
+const HEAVY_LAYER = 1500;
+
+/** Replace tower/column layers. Heavy outgoing layers are removed immediately. */
+function beginLayer(container, animate) {
+  const old = container.selectAll('g.layer');
+  const heavyOut = !old.filter('.heavy').empty();
+  if (animate && !heavyOut) old.interrupt().transition().duration(220).style('opacity', 0).remove();
+  else old.interrupt().remove();
+  return container.append('g').attr('class', 'layer');
+}
+
 // Real pixel-width measurement for x-axis tick labels, so overlap is resolved
 // by thinning out ticks (never by shortening the label text further).
 const TICK_FONT_STACK = 'Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
@@ -142,6 +155,15 @@ function minBandFor(minBand, chartW) {
   if (chartW >= NARROW_CHART_W) return minBand;
   const scale = Math.max(0.18, chartW / 900);
   return Math.max(1, minBand * scale);
+}
+
+// Daily spans ~10k buckets → 13–30k px SVG. WebKit often freezes or tabs out
+// past ~8k px with complex gradient paths; Chromium tolerates the full width.
+const WEBKIT_MAX_PLOT_W = 8192;
+const isWebKit = typeof navigator !== 'undefined' && /Apple Computer/.test(navigator.vendor);
+function plotWidthFor(n, minBand, chartW, viewportW) {
+  const desired = Math.max(viewportW, Math.ceil(n * minBandFor(minBand, chartW)));
+  return isWebKit ? Math.min(desired, Math.max(viewportW, WEBKIT_MAX_PLOT_W)) : desired;
 }
 
 // Shrinks an SVG text element's font size (from its CSS-defined size) just
@@ -279,7 +301,7 @@ function renderTowerView(animate) {
   const objFloor = chartW < NARROW_CHART_W ? 96 : 200;
   const objW = Math.round(Math.min(Math.max(estimatedObjPx * obj.aspect + 96, objFloor), chartW * 0.4));
   const viewportW = chartW - Y_AXIS_W - objW;
-  const plotW = Math.max(viewportW, Math.ceil(n * minBandFor(g.minBand, chartW)));
+  const plotW = plotWidthFor(n, g.minBand, chartW, viewportW);
 
   els.scroll.style.width = `${viewportW}px`;
   els.plot.setAttribute('width', plotW);
@@ -347,11 +369,7 @@ function renderGrid(y, plotW, tickValues) {
 
 function renderTowers(buckets, y, band, animate) {
   const container = d3.select(els.plot).select('g.towers');
-  const old = container.selectAll('g.layer');
-  if (animate) old.interrupt().transition().duration(220).style('opacity', 0).remove();
-  else old.remove();
-
-  const layer = container.append('g').attr('class', 'layer');
+  const layer = beginLayer(container, animate);
   const ground = y(0);
   const barW = barWidthFor(band);
   const offset = (band - barW) / 2;
@@ -359,7 +377,17 @@ function renderTowers(buckets, y, band, animate) {
   buckets.forEach((b, i) => {
     if (b.pages > 0) nonEmpty.push({ b, i, j: nonEmpty.length, h: ground - y(b.pages * SHEET_M) });
   });
-  const detailed = barW >= 4 && nonEmpty.length <= 1500;
+  const heavy = nonEmpty.length > HEAVY_LAYER;
+  const detailed = barW >= 4 && !heavy;
+
+  // Daily (~5k bars): one path, no per-bar DOM / opacity fades (Safari-safe).
+  if (heavy) {
+    layer.classed('heavy', true);
+    const bodyPath = d3.path();
+    for (const d of nonEmpty) bodyPath.rect(d.i * band + offset, ground - d.h, barW, d.h);
+    layer.append('path').attr('class', 'body').attr('d', bodyPath).attr('fill', '#ebe5d7');
+    return;
+  }
 
   const towers = layer.selectAll('g')
     .data(nonEmpty)
@@ -376,7 +404,7 @@ function renderTowers(buckets, y, band, animate) {
   const bodies = towers.selectAll('rect.body');
   const caps = towers.selectAll('rect.cap');
 
-  if (animate && nonEmpty.length <= 1500) {
+  if (animate) {
     const stagger = Math.min(14, 520 / Math.max(1, nonEmpty.length));
     bodies.attr('y', ground).attr('height', 0)
       .transition().delay(d => 120 + d.j * stagger).duration(700).ease(d3.easeCubicOut)
@@ -387,7 +415,6 @@ function renderTowers(buckets, y, band, animate) {
   } else {
     bodies.attr('y', d => ground - d.h).attr('height', d => d.h);
     caps.attr('y', d => ground - d.h);
-    if (animate) layer.style('opacity', 0).transition().duration(260).style('opacity', 1);
   }
 }
 
@@ -491,7 +518,7 @@ function renderNightView(animate) {
 
   const chartW = els.chart.clientWidth;
   const viewportW = chartW - NIGHT_AXIS_W;
-  const plotW = Math.max(viewportW, Math.ceil(n * minBandFor(g.minBand, chartW)));
+  const plotW = plotWidthFor(n, g.minBand, chartW, viewportW);
 
   els.scroll.style.width = `${viewportW}px`;
   els.plot.setAttribute('width', plotW);
@@ -566,11 +593,7 @@ function renderNightYAxis(y) {
 // Daily and weekly: one column per bucket, rising from midnight to the average release time.
 function renderNightColumns(buckets, y, band, ground, animate) {
   const container = d3.select(els.plot).select('g.towers');
-  const old = container.selectAll('g.layer');
-  if (animate) old.interrupt().transition().duration(220).style('opacity', 0).remove();
-  else old.remove();
-
-  const layer = container.append('g').attr('class', 'layer');
+  const layer = beginLayer(container, animate);
   const barW = barWidthFor(band);
   const offset = (band - barW) / 2;
   const nonEmpty = [];
@@ -578,8 +601,10 @@ function renderNightColumns(buckets, y, band, ground, animate) {
     if (b.issues > 0) nonEmpty.push({ b, i, j: nonEmpty.length, h: ground - y(b.meanMinutes) });
   });
 
-  // Thousands of gradient-filled rects repaint slowly while fading out; merge them into single paths instead.
-  if (nonEmpty.length > 1500) {
+  // Thousands of gradient-filled rects: merge into paths and skip opacity fades
+  // (Safari freezes when compositing these, especially on navigate away).
+  if (nonEmpty.length > HEAVY_LAYER) {
+    layer.classed('heavy', true);
     const bodyPath = d3.path();
     const capPath = d3.path();
     for (const d of nonEmpty) {
@@ -589,7 +614,6 @@ function renderNightColumns(buckets, y, band, ground, animate) {
     }
     layer.append('path').attr('class', 'body').attr('d', bodyPath).attr('fill', 'url(#sky)');
     layer.append('path').attr('class', 'cap').attr('d', capPath).attr('fill', '#fff').attr('opacity', 0.85);
-    if (animate) layer.style('opacity', 0).transition().duration(260).style('opacity', 1);
     return;
   }
 
@@ -630,11 +654,7 @@ function visibleSpan(yTop, yBottom) {
 // wick is the 10th–90th, so releases outside that band stay off the chart as outliers.
 function renderNightCandles(buckets, y, band, ground, animate) {
   const container = d3.select(els.plot).select('g.towers');
-  const old = container.selectAll('g.layer');
-  if (animate) old.interrupt().transition().duration(220).style('opacity', 0).remove();
-  else old.remove();
-
-  const layer = container.append('g').attr('class', 'layer');
+  const layer = beginLayer(container, animate);
   const barW = barWidthFor(band);
   const wickW = Math.max(1, Math.min(barW * 0.22, 3));
   const offset = (band - barW) / 2;
@@ -654,8 +674,9 @@ function renderNightCandles(buckets, y, band, ground, animate) {
     });
   });
 
-  // Thousands of gradient-filled shapes repaint slowly while fading out; merge them into single paths instead.
-  if (nonEmpty.length > 1500) {
+  // Same Safari-safe path as night columns: merge and skip opacity fades.
+  if (nonEmpty.length > HEAVY_LAYER) {
+    layer.classed('heavy', true);
     const wickPath = d3.path();
     const boxPath = d3.path();
     for (const d of nonEmpty) {
@@ -665,7 +686,6 @@ function renderNightCandles(buckets, y, band, ground, animate) {
     }
     layer.append('path').attr('class', 'wick').attr('d', wickPath).attr('fill', '#9fb4d8');
     layer.append('path').attr('class', 'box').attr('d', boxPath).attr('fill', 'url(#sky)');
-    if (animate) layer.style('opacity', 0).transition().duration(260).style('opacity', 1);
     return;
   }
 
